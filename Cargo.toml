@@ -22,6 +22,9 @@ typenum = "1.7.0"
 default-features = false
 version = "0.2.0"
 
+[dev-dependencies]
+approx = "0.3.0"
+
 [build-dependencies]
 quote = "0.4.2"
 syn = "0.12.13"

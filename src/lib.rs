@@ -81,7 +81,7 @@
 #![cfg_attr(feature = "const-fn", feature(const_fn))]
 #![cfg_attr(feature = "try-from", feature(try_from))]
 #![deny(missing_docs)]
-#![deny(warnings)]
+//#![deny(warnings)]
 #![no_std]
 
 extern crate cast;
@@ -101,6 +101,8 @@ use typenum::{Cmp, Greater, Less, U0, U1, U2, U3, U4, U5, U6, U7, U8, U9, U10,
               U24, U25, U26, U27, U28, U29, U30, U31, U32, Unsigned};
 
 mod num_traits_impl;
+
+use num_traits::{Zero, One};
 
 /// Fixed point number
 ///
@@ -649,6 +651,107 @@ macro_rules! ty {
 
                 (K * $ty::from_bits(r), theta)
             }
+
+            /// computes the arctan of self
+            pub fn atan(self) -> I3F29 {
+                cordic(I16F16::one().into_bits(), self.into_bits()).1
+            }
+
+            /// square root of self
+            pub fn sqrt(self) -> Result<Self, ()> {
+                let mut invert = false;
+                let itr = $ifrac;
+                let mut operand = self;
+                if self < Self::zero() {
+                    return Err(());
+                };
+                if operand == Self::zero() || operand == Self::one() {
+                    return Ok(self);
+                };
+                if operand < Self::one() && operand.into_bits() > 6 {
+                    invert = true;
+                    operand = Self::one() / operand;
+                }
+                // Newton iterations
+                let mut l = (operand >> 1) + 1;
+                for i in 0..$ifrac {
+                    l = (l + operand / l) >> 1;
+                }
+                if invert {
+                    l = Self::one() / l; 
+                }
+                Ok(l)
+            }
+
+            /// power
+            pub fn pow(self, exp: Self) -> Self {
+                if exp == Self::zero() {
+                    return self;
+                };
+                if exp < Self::zero() {
+                    return Self::zero();
+                }
+                self.pow(self.ln() * exp)
+            }
+
+            /// natural logarithm
+            pub fn ln(self) -> Self {    
+                #![allow(non_snake_case)]
+                #[cfg(feature = "const-fn")]
+                const LG: [$ty; 7] = [
+                    $ty(0.6666666666666735130_f64).unwrap(),
+                    $ty(0.3999999999940941908_f64).unwrap(),
+                    $ty(0.2857142874366239149_f64).unwrap(),
+                    $ty(0.2222219843214978396_f64).unwrap(),
+                    $ty(0.1818357216161805012_f64).unwrap(),
+                    $ty(0.1531383769920937332_f64).unwrap(),
+                    $ty(0.1479819860511658591_f64).unwrap()                    
+                ];
+                #[cfg(feature = "const-fn")]
+                const LN2: $ty = $ty(0.69314718055994530942_f64).unwrap();
+                #[cfg(feature = "const-fn")]
+                const TWO: $ty = $ty(2.0_f64).unwrap();
+
+                #[cfg(not(feature = "const-fn"))]
+                let LG: [$ty; 7] = [
+                    $ty(0.6666666666666735130_f64).unwrap(),
+                    $ty(0.3999999999940941908_f64).unwrap(),
+                    $ty(0.2857142874366239149_f64).unwrap(),
+                    $ty(0.2222219843214978396_f64).unwrap(),
+                    $ty(0.1818357216161805012_f64).unwrap(),
+                    $ty(0.1531383769920937332_f64).unwrap(),
+                    $ty(0.1479819860511658591_f64).unwrap()                    
+                ];
+                #[cfg(not(feature = "const-fn"))]
+                let LN2: $ty = $ty(0.69314718055994530942_f64).unwrap();
+                #[cfg(not(feature = "const-fn"))]
+                let TWO: $ty = $ty(2.0_f64).unwrap();
+
+                if self < Self::zero() {
+                    return Self::zero();
+                };
+                if self == Self::zero() {
+                    return Self::from_bits(i32::MIN);
+                };
+
+                let mut log2 = Self::zero();
+                let mut xi = self;
+                
+                while xi > TWO {
+                    xi = xi >> 1;
+                    log2 += 1;
+                }
+                
+                let f = xi - Self::one();
+                let s = f / (TWO + f);
+                let z = s * s;
+                let w = z * z;
+                let R = w * (LG[1] + w * (LG[3] + w * (LG[5]))) 
+                    + z * (LG[0] + w * (LG[2] + w * (LG[4] + w * LG[6])));
+
+                LN2 * (log2 << $ifrac) + f - s * (f - R)
+            }    
+
         }
     };
 }
@@ -3946,3 +4049,73 @@ impl cast::From<u8> for I8F8 {
 }
 
 from_uxx!(i16, u8; I15F1, I14F2, I13F3, I12F4, I11F5, I10F6, I9F7);
+
+#[cfg(test)]
+#[macro_use]
+extern crate approx;
+mod tests {
+    use super::*;
+    use cast::f64;
+    
+    #[test]
+    fn atan_works() {
+        assert_relative_eq!(
+            f64(I16F16(0.0_f64).unwrap().atan()), 
+            0.0_f64, 
+            epsilon = 1.0e-6);
+        assert_relative_eq!(
+            f64(I16F16(0.5_f64).unwrap().atan()), 
+            0.463648_f64, 
+            epsilon = 1.0e-6);
+        assert_relative_eq!(
+            f64(I16F16(-0.5_f64).unwrap().atan()), 
+            -0.463648_f64, 
+            epsilon = 1.0e-6);
+    
+    }
+    #[test]
+    fn sqrt_works() {
+        assert_relative_eq!(
+            f64(I16F16(1_f64).unwrap().sqrt().unwrap()), 
+            1.0, 
+            epsilon = 1.0e-6
+        );
+        assert_relative_eq!(
+            f64(I16F16(0_f64).unwrap().sqrt().unwrap()), 
+            0.0, 
+            epsilon = 1.0e-6
+        );
+        assert_relative_eq!(
+            f64(I16F16(0.1_f64).unwrap().sqrt().unwrap()), 
+            0.316228, 
+            epsilon = 1.0e-4
+        );
+        assert_relative_eq!(
+            f64(I16F16(10.0_f64).unwrap().sqrt().unwrap()), 
+            3.16228, 
+            epsilon = 1.0e-4
+        );
+        
+    }
+
+    #[test]
+    fn ln_works() {
+        assert!(I16F16(1_f64).unwrap().ln() == I16F16::zero());
+
+        assert!(I16F16(0_f64).unwrap().ln().into_bits() == i32::MIN);
+
+        assert_relative_eq!(
+            f64(I16F16(2.71828_f64).unwrap().ln()), 
+            1.0, 
+            epsilon = 1.0e-6
+        );
+
+        assert_relative_eq!(
+            f64(I16F16(10_f64).unwrap().ln()), 
+            2.30259, 
+            epsilon = 1.0e-6
+        );
+        
+    }
+
+}
