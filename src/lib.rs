@@ -683,6 +683,39 @@ macro_rules! ty {
                 Ok(l)
             }
 
+            /// exponential function e^(self)
+            pub fn exp(self) -> Self {
+                let E = $ty(2.718281828459045235360287471_f64).unwrap();
+                let mut operand = self;
+
+                if operand == Self::zero() {
+                    return Self::one();
+                };
+                if operand == Self::one() {
+                    return E;
+                };
+                let mut neg = operand < Self::zero();
+                if neg {
+                    operand = -operand; 
+                };
+
+                let mut result = operand + Self::one();
+                let mut term = operand;
+
+                for i in (2..30) {
+                    term = term * operand / $ty(i as u32).unwrap();
+                    result += term;
+                    //if term < 500 && (i > 15 || term < $ty(20i32).unwrap()) {
+                    //    break;
+                    //};
+
+                }
+                if neg {
+                    result = Self::one() / result;
+                }
+                result
+            }
+
             /// power
             pub fn pow(self, exp: Self) -> Self {
                 if exp == Self::zero() {
@@ -691,11 +724,67 @@ macro_rules! ty {
                 if exp < Self::zero() {
                     return Self::zero();
                 }
-                self.pow(self.ln() * exp)
+                (self.ln().unwrap() * exp).exp()
+            }
+
+            /// right-shift with rounding
+            fn rs(self) -> Self {
+                let x = self.into_bits();
+                Self::from_bits((x >> 1) + (x & 1))
+            }
+
+            /// base 2 logarithm assuming self >=1
+            fn log2_inner(self) -> Self {
+                #![allow(non_snake_case)]
+
+                #[cfg(not(feature = "const-fn"))]
+                let TWO: $ty = $ty(2.0_f64).unwrap();
+                #[cfg(feature = "const-fn")]
+                const TWO: $ty = $ty(2.0_f64).unwrap();
+
+                let mut x = self;
+                let mut result = 0i32;  
+
+                while x >= TWO {
+                    result += 1;
+                    x = x.rs();
+                }
+                
+                if x == Self::one() {
+                    return Self::from_bits(result << 16);
+                };
+
+                for _i in (0..16).rev() {
+                    x *= x;
+                    result = result << 1;
+                    if x >= TWO {
+                        result = result | 1;
+                        x = x.rs();
+                    }
+                } 
+                Self::from_bits(result)
+            }
+
+            /// base 2 logarithm 
+            pub fn log2(self) -> Result<Self, ()> {
+                if self <= Self::zero() {
+                    return Err(())
+                };
+                if self < Self::one() {
+                    let inverse = Self::one() / self;
+                    return Ok(-inverse.log2_inner());
+                };
+                return Ok(self.log2_inner());
             }
 
             /// natural logarithm
-            pub fn ln(self) -> Self {    
+            pub fn ln(self) -> Result<Self, ()> {    
+                Ok(self.log2()? / $ty(2.718281828459045235360287471_f64).unwrap().log2()?)
+
+                /*
+                // ported from https://sourceforge.net/p/fixedptc/code/ci/default/tree/fixedptc.h
+                // doesn't work
+
                 #![allow(non_snake_case)]
                 #[cfg(feature = "const-fn")]
                 const LG: [$ty; 7] = [
@@ -730,6 +819,7 @@ macro_rules! ty {
                 if self < Self::zero() {
                     return Self::zero();
                 };
+
                 if self == Self::zero() {
                     return Self::from_bits(i32::MIN);
                 };
@@ -750,6 +840,8 @@ macro_rules! ty {
                     + z * (LG[0] + w * (LG[2] + w * (LG[4] + w * LG[6])));
 
                 LN2 * (log2 << $ifrac) + f - s * (f - R)
+
+                */
             }    
 
         }
@@ -4099,23 +4191,107 @@ mod tests {
     }
 
     #[test]
-    fn ln_works() {
-        assert!(I16F16(1_f64).unwrap().ln() == I16F16::zero());
+    fn rs_works() {
+        assert_eq!(f64(I16F16(0_f64).unwrap().rs()), 0.0);
+        assert_eq!(f64(I16F16(1_f64).unwrap().rs()), 0.5);
+        assert_eq!(f64(I16F16(2_f64).unwrap().rs()), 1.0);
+        assert_eq!(f64(I16F16(3_f64).unwrap().rs()), 1.5);
+        assert_eq!(f64(I16F16(4_f64).unwrap().rs()), 2.0);
+        assert_eq!(f64(I16F16(-1_f64).unwrap().rs()), -0.5);
+        assert_eq!(f64(I16F16(-2_f64).unwrap().rs()), -1.0);
+        assert_eq!(I16F16::from_bits(1).rs().into_bits(), 1);
+        assert_eq!(I16F16::from_bits(2).rs().into_bits(), 1);
+        assert_eq!(I16F16::from_bits(3).rs().into_bits(), 2);
+        assert_eq!(I16F16::from_bits(4).rs().into_bits(), 2);
+    }
 
-        assert!(I16F16(0_f64).unwrap().ln().into_bits() == i32::MIN);
+    #[test]
+    fn log2_works() {
+        assert!(I16F16(0_f64).unwrap().log2().is_err());
+
+        assert_eq!(I16F16(1_f64).unwrap().log2().unwrap(), I16F16::zero());
 
         assert_relative_eq!(
-            f64(I16F16(2.71828_f64).unwrap().ln()), 
+            f64(I16F16(2.0_f64).unwrap().log2().unwrap()), 
             1.0, 
             epsilon = 1.0e-6
         );
 
         assert_relative_eq!(
-            f64(I16F16(10_f64).unwrap().ln()), 
-            2.30259, 
+            f64(I16F16(4_f64).unwrap().log2().unwrap()), 
+            2.0, 
             epsilon = 1.0e-6
+        );        
+
+        assert_relative_eq!(
+            f64(I16F16(3.33333_f64).unwrap().log2().unwrap()), 
+            1.73696, 
+            epsilon = 1.0e-5
+        );
+
+        assert_relative_eq!(
+            f64(I16F16(0.11111_f64).unwrap().log2().unwrap()), 
+            -3.16994, 
+            epsilon = 1.0e-2
+        );        
+
+    }
+
+    #[test]
+    fn ln_works() {
+        assert_eq!(I16F16(1_f64).unwrap().ln().unwrap(), I16F16::zero());
+
+        assert!(I16F16(0_f64).unwrap().ln().is_err());
+
+        assert_relative_eq!(
+            f64(I16F16(2.71828_f64).unwrap().ln().unwrap()), 
+            1.0, 
+            epsilon = 1.0e-6
+        );
+
+        assert_relative_eq!(
+            f64(I16F16(10_f64).unwrap().ln().unwrap()), 
+            2.30259, 
+            epsilon = 1.0e-5
         );
         
     }
 
+    #[test]
+    fn pow_works() {
+        assert_eq!(f64(I16F16(1_f64).unwrap().pow(I16F16(2.0_f64).unwrap())), 1.0);
+        assert_relative_eq!(
+            f64(I16F16(2_f64).unwrap().pow(I16F16(2.0_f64).unwrap())), 
+            4.0,
+            epsilon = 1.0e-3
+        );
+        assert_relative_eq!(
+            f64(I16F16(2_f64).unwrap().pow(I16F16(3.0_f64).unwrap())), 
+            8.0,
+            epsilon = 1.0e-3
+        );
+        assert_relative_eq!(
+            f64(I16F16(2.9_f64).unwrap().pow(I16F16(3.1_f64).unwrap())), 
+            27.129,
+            epsilon = 1.0e-2
+        );
+    }
+
+    #[test]
+    fn exp_works() {
+        let E = I16F16(2.718281828459045235360287471_f64).unwrap();
+        assert_eq!(f64(I16F16(0_f64).unwrap().exp()), 1.0);
+        assert_relative_eq!(
+            f64(I16F16(1_f64).unwrap().exp()), 
+            2.718281828459045235,
+            epsilon = 1.0e-4
+        );
+
+        assert_relative_eq!(
+            f64(I16F16(5_f64).unwrap().exp()), 
+            148.413159,
+            epsilon = 1.0e-3
+        );
+
+    }
 }
