@@ -660,7 +660,6 @@ macro_rules! ty {
             /// square root of self
             pub fn sqrt(self) -> Result<Self, ()> {
                 let mut invert = false;
-                let itr = $ifrac;
                 let mut operand = self;
                 if self < Self::zero() {
                     return Err(());
@@ -674,7 +673,7 @@ macro_rules! ty {
                 }
                 // Newton iterations
                 let mut l = (operand >> 1) + 1;
-                for i in 0..$ifrac {
+                for _i in 0..$ifrac {
                     l = (l + operand / l) >> 1;
                 }
                 if invert {
@@ -685,7 +684,13 @@ macro_rules! ty {
 
             /// exponential function e^(self)
             pub fn exp(self) -> Self {
-                let E = $ty(2.718281828459045235360287471_f64).unwrap();
+                #![allow(non_snake_case)]
+
+                #[cfg(not(feature = "const-fn"))]
+                let E : Self = $ty(2.718281828459045235360287471_f64).unwrap();
+                #[cfg(feature = "const-fn")]
+                const E : Self = $ty(2.718281828459045235360287471_f64).unwrap();
+
                 let mut operand = self;
 
                 if operand == Self::zero() {
@@ -694,7 +699,7 @@ macro_rules! ty {
                 if operand == Self::one() {
                     return E;
                 };
-                let mut neg = operand < Self::zero();
+                let neg = operand < Self::zero();
                 if neg {
                     operand = -operand; 
                 };
@@ -779,8 +784,8 @@ macro_rules! ty {
 
             /// natural logarithm
             pub fn ln(self) -> Result<Self, ()> {    
-                Ok(self.log2()? / $ty(2.718281828459045235360287471_f64).unwrap().log2()?)
-
+                //Ok(self.log2()? / $ty(2.718281828459045235360287471_f64).unwrap().log2()?)
+                Ok(self.log2()? * $ty(0.69314718055994530941723212_f64).unwrap())
                 /*
                 // ported from https://sourceforge.net/p/fixedptc/code/ci/default/tree/fixedptc.h
                 // doesn't work
@@ -4246,13 +4251,13 @@ mod tests {
         assert_relative_eq!(
             f64(I16F16(2.71828_f64).unwrap().ln().unwrap()), 
             1.0, 
-            epsilon = 1.0e-6
+            epsilon = 1.0e-4
         );
 
         assert_relative_eq!(
             f64(I16F16(10_f64).unwrap().ln().unwrap()), 
             2.30259, 
-            epsilon = 1.0e-5
+            epsilon = 1.0e-4
         );
         
     }
@@ -4279,7 +4284,6 @@ mod tests {
 
     #[test]
     fn exp_works() {
-        let E = I16F16(2.718281828459045235360287471_f64).unwrap();
         assert_eq!(f64(I16F16(0_f64).unwrap().exp()), 1.0);
         assert_relative_eq!(
             f64(I16F16(1_f64).unwrap().exp()), 
