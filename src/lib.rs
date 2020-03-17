@@ -657,6 +657,51 @@ macro_rules! ty {
                 cordic(I16F16::one().into_bits(), self.into_bits()).1
             }
 
+            /// sine function in radians
+            pub fn sin(self) -> I8F24 {
+                let two_pi  = $ty(6.283185307179586476925_f64).unwrap();
+                let pi      = $ty(3.141592653589793238462_f64).unwrap();
+                let pi_half = $ty(1.570796326794896619231_f64).unwrap();
+
+                let mut angle = self;
+
+                //wraparound
+                while angle > pi {
+                    angle -= two_pi;
+                }
+                while angle < -pi {
+                    angle += two_pi;
+                }
+                //mirror
+                if angle > pi_half {
+                    angle = pi_half - (angle - pi_half);
+                }
+                if angle < -pi_half {
+                    angle = -pi_half - (angle + pi_half);
+                }
+
+                //FIXME: find correction factor for constant iterations
+                // x0= 1/K with K ~ 1.647 for infinite iterations
+                let x = I8F24(0.607253_f64).unwrap();
+
+                // FIXME: typecast doesn't work. only works for I8F24
+                let (_x,y) = cordic_rotation(x, I8F24::zero(), I8F24::from_bits(angle.into_bits()));
+                y 
+            }
+
+            /// cosine function in radians
+            pub fn cos(self) -> I8F24 {
+                let pi_half = $ty(1.570796326794896619231_f64).unwrap();
+                let angle = self + pi_half;
+                angle.sin()
+            }
+
+            /// tangent function in radians
+            pub fn tan(self) -> I8F24 {
+                let angle = self << 1;
+                angle.sin() / ( 1 + angle.cos())
+            }
+
             /// square root of self
             pub fn sqrt(self) -> Result<Self, ()> {
                 let mut invert = false;
@@ -784,69 +829,7 @@ macro_rules! ty {
 
             /// natural logarithm
             pub fn ln(self) -> Result<Self, ()> {    
-                //Ok(self.log2()? / $ty(2.718281828459045235360287471_f64).unwrap().log2()?)
                 Ok(self.log2()? * $ty(0.69314718055994530941723212_f64).unwrap())
-                /*
-                // ported from https://sourceforge.net/p/fixedptc/code/ci/default/tree/fixedptc.h
-                // doesn't work
-
-                #![allow(non_snake_case)]
-                #[cfg(feature = "const-fn")]
-                const LG: [$ty; 7] = [
-                    $ty(0.6666666666666735130_f64).unwrap(),
-                    $ty(0.3999999999940941908_f64).unwrap(),
-                    $ty(0.2857142874366239149_f64).unwrap(),
-                    $ty(0.2222219843214978396_f64).unwrap(),
-                    $ty(0.1818357216161805012_f64).unwrap(),
-                    $ty(0.1531383769920937332_f64).unwrap(),
-                    $ty(0.1479819860511658591_f64).unwrap()                    
-                ];
-                #[cfg(feature = "const-fn")]
-                const LN2: $ty = $ty(0.69314718055994530942_f64).unwrap();
-                #[cfg(feature = "const-fn")]
-                const TWO: $ty = $ty(2.0_f64).unwrap();
-
-                #[cfg(not(feature = "const-fn"))]
-                let LG: [$ty; 7] = [
-                    $ty(0.6666666666666735130_f64).unwrap(),
-                    $ty(0.3999999999940941908_f64).unwrap(),
-                    $ty(0.2857142874366239149_f64).unwrap(),
-                    $ty(0.2222219843214978396_f64).unwrap(),
-                    $ty(0.1818357216161805012_f64).unwrap(),
-                    $ty(0.1531383769920937332_f64).unwrap(),
-                    $ty(0.1479819860511658591_f64).unwrap()                    
-                ];
-                #[cfg(not(feature = "const-fn"))]
-                let LN2: $ty = $ty(0.69314718055994530942_f64).unwrap();
-                #[cfg(not(feature = "const-fn"))]
-                let TWO: $ty = $ty(2.0_f64).unwrap();
-
-                if self < Self::zero() {
-                    return Self::zero();
-                };
-
-                if self == Self::zero() {
-                    return Self::from_bits(i32::MIN);
-                };
-
-                let mut log2 = Self::zero();
-                let mut xi = self;
-                
-                while xi > TWO {
-                    xi = xi >> 1;
-                    log2 += 1;
-                }
-                
-                let f = xi - Self::one();
-                let s = f / (TWO + f);
-                let z = s * s;
-                let w = z * z;
-                let R = w * (LG[1] + w * (LG[3] + w * (LG[5]))) 
-                    + z * (LG[0] + w * (LG[2] + w * (LG[4] + w * LG[6])));
-
-                LN2 * (log2 << $ifrac) + f - s * (f - R)
-
-                */
             }    
 
         }
@@ -1072,6 +1055,113 @@ fn cordic(mut x: i32, mut y: i32) -> (i32, I3F29) {
 
     (x, z)
 }
+
+//FIXME: write macro to avoid redundant code
+/// CORDIC in rotation mode. 
+fn cordic_rotation(mut x: I8F24, mut y: I8F24, mut z: I8F24) -> (I8F24, I8F24) {
+    #![allow(non_snake_case)]
+
+    // NOTE `(2 ^ -i).atan()` for `i = 0, 1, 2, ..`
+    #[cfg(feature = "const-fn")]
+    const ANGLES: [I8F24; 31] = [
+        I8F24::new(0.7853981633974483),
+        I8F24::new(0.4636476090008061),
+        I8F24::new(0.24497866312686414),
+        I8F24::new(0.12435499454676144),
+        I8F24::new(0.06241880999595735),
+        I8F24::new(0.031239833430268277),
+        I8F24::new(0.015623728620476831),
+        I8F24::new(0.007812341060101111),
+        I8F24::new(0.0039062301319669718),
+        I8F24::new(0.0019531225164788188),
+        I8F24::new(0.0009765621895593195),
+        I8F24::new(0.0004882812111948983),
+        I8F24::new(0.00024414062014936177),
+        I8F24::new(0.00012207031189367021),
+        I8F24::new(0.00006103515617420877),
+        I8F24::new(0.000030517578115526096),
+        I8F24::new(0.000015258789061315762),
+        I8F24::new(0.00000762939453110197),
+        I8F24::new(0.000003814697265606496),
+        I8F24::new(0.000001907348632810187),
+        I8F24::new(0.0000009536743164059608),
+        I8F24::new(0.00000047683715820308884),
+        I8F24::new(0.00000023841857910155797),
+        I8F24::new(0.00000011920928955078068),
+        I8F24::new(0.00000005960464477539055),
+        I8F24::new(0.000000029802322387695303),
+        I8F24::new(0.000000014901161193847655),
+        I8F24::new(0.000000007450580596923828),
+        I8F24::new(0.000000003725290298461914),
+        I8F24::new(0.000000001862645149230957),
+        I8F24::new(0.0000000009313225746154785),
+    ];
+
+    #[cfg(feature = "const-fn")]
+    const ZERO: I8F24 = I8F24::new(0.);
+
+    #[cfg(not(feature = "const-fn"))]
+    let ANGLES = [
+        I8F24(0.7853981633974483_f64).unwrap(),
+        I8F24(0.4636476090008061_f64).unwrap(),
+        I8F24(0.24497866312686414_f64).unwrap(),
+        I8F24(0.12435499454676144_f64).unwrap(),
+        I8F24(0.06241880999595735_f64).unwrap(),
+        I8F24(0.031239833430268277_f64).unwrap(),
+        I8F24(0.015623728620476831_f64).unwrap(),
+        I8F24(0.007812341060101111_f64).unwrap(),
+        I8F24(0.0039062301319669718_f64).unwrap(),
+        I8F24(0.0019531225164788188_f64).unwrap(),
+        I8F24(0.0009765621895593195_f64).unwrap(),
+        I8F24(0.0004882812111948983_f64).unwrap(),
+        I8F24(0.00024414062014936177_f64).unwrap(),
+        I8F24(0.00012207031189367021_f64).unwrap(),
+        I8F24(0.00006103515617420877_f64).unwrap(),
+        I8F24(0.000030517578115526096_f64).unwrap(),
+        I8F24(0.000015258789061315762_f64).unwrap(),
+        I8F24(0.00000762939453110197_f64).unwrap(),
+        I8F24(0.000003814697265606496_f64).unwrap(),
+        I8F24(0.000001907348632810187_f64).unwrap(),
+        I8F24(0.0000009536743164059608_f64).unwrap(),
+        I8F24(0.00000047683715820308884_f64).unwrap(),
+        I8F24(0.00000023841857910155797_f64).unwrap(),
+        I8F24(0.00000011920928955078068_f64).unwrap(),
+        I8F24(0.00000005960464477539055_f64).unwrap(),
+        I8F24(0.000000029802322387695303_f64).unwrap(),
+        I8F24(0.000000014901161193847655_f64).unwrap(),
+        I8F24(0.000000007450580596923828_f64).unwrap(),
+        I8F24(0.000000003725290298461914_f64).unwrap(),
+        I8F24(0.000000001862645149230957_f64).unwrap(),
+        I8F24(0.0000000009313225746154785_f64).unwrap(),
+    ];
+
+    #[cfg(not(feature = "const-fn"))]
+    let ZERO = I8F24(0_f64).unwrap();
+    
+    for (angle, i) in ANGLES.iter().cloned().zip(0..) {
+        //if z == ZERO {
+        //    break;
+        //};
+        if i >= 24 {
+            break;
+        }
+        let prev_x = x;
+        if z < ZERO {
+            x += y >> i;
+            y -= prev_x >> i;
+            z += angle;
+        } else {
+            x -= y >> i;
+            y += prev_x >> i;
+            z -= angle;
+        }
+        //k *= (I8F24::one() + (I8F24(2i32).unwrap() >> i)).sqrt().unwrap()
+    }
+
+    (x, y)
+}
+
+
 
 macro_rules! cast {
     (+ $largest32:ident,
@@ -4298,4 +4388,105 @@ mod tests {
         );
 
     }
+
+    #[test]
+    fn sin_works() {
+        let two_pi          = I8F24(6.283185307179586476925_f64).unwrap();
+        let pi              = I8F24(3.141592653589793238462_f64).unwrap();
+        let pi_half         = I8F24(1.570796326794896619231_f64).unwrap();
+        let pi_quarter      = I8F24(0.785398163397448309615_f64).unwrap();
+
+        assert_relative_eq!(
+            f64(I8F24(0_f64).unwrap().sin()), 
+            0.0,
+            epsilon = 1.0e-5
+        );
+
+        assert_relative_eq!(
+            f64(pi_half.sin()), 
+            1.0,
+            epsilon = 1.0e-5
+        );
+
+        assert_relative_eq!(
+            f64(pi.sin()), 
+            0.0,
+            epsilon = 1.0e-5
+        );
+        
+        assert_relative_eq!(
+            f64((pi+pi_half).sin()), 
+            -1.0,
+            epsilon = 1.0e-5
+        );
+
+        assert_relative_eq!(
+            f64(two_pi.sin()), 
+            0.0,
+            epsilon = 1.0e-5
+        );
+
+        assert_relative_eq!(
+            f64(pi_quarter.sin()), 
+            0.707107,
+            epsilon = 1.0e-1
+        );
+
+        assert_relative_eq!(
+            f64((-pi_half).sin()), 
+            -1.0,
+            epsilon = 1.0e-1
+        );
+
+        assert_relative_eq!(
+            f64((-pi_quarter).sin()), 
+            -0.707107,
+            epsilon = 1.0e-1
+        );
+
+        assert_relative_eq!(
+            f64((pi + pi_quarter).sin()), 
+            -0.707107,
+            epsilon = 1.0e-1
+        );
+
+        assert_relative_eq!(
+            f64(I8F24(2_f64).unwrap().sin()), 
+            0.909297,
+            epsilon = 1.0e-5
+        );
+        assert_relative_eq!(
+            f64(I8F24(-2_f64).unwrap().sin()), 
+            -0.909297,
+            epsilon = 1.0e-5
+        );
+
+    }
+
+    #[test]
+    fn cos_works() {
+        let pi_half         = I8F24(1.570796326794896619231_f64).unwrap();
+        assert_relative_eq!(
+            f64(I8F24(0_f64).unwrap().cos()), 
+            1.0,
+            epsilon = 1.0e-5
+        );    
+    }
+
+    #[test]
+    fn tan_works() {
+        let pi_half         = I8F24(1.570796326794896619231_f64).unwrap();
+        assert_relative_eq!(
+            f64(I8F24(0_f64).unwrap().tan()), 
+            0.0,
+            epsilon = 1.0e-5
+        );    
+        assert_relative_eq!(
+            f64(I8F24(1_f64).unwrap().tan()), 
+            1.55741,
+            epsilon = 1.0e-5
+        );    
+
+    }
+
 }
